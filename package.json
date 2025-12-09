@@ -1,0 +1,15 @@
+{
+  "name": "phaser-fishing-game",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A polished Phaser 3 fishing game for GitHub Pages with Supabase leaderboard",
+  "scripts": {
+    "dev": "npx live-server --port=8080",
+    "build": "echo \"No build step required; files ready in project root\"",
+    "start": "npx live-server docs --port=8080",
+    "lint": "echo \"No lint configured\""
+  },
+  "devDependencies": {
+    "live-server": "^1.2.2"
+  }
+}
