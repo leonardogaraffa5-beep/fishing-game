@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simple Fishing Game</title>
+    <title>Simple Fishing Game with Power-Ups</title>
     <style>
         body {
             margin: 0;
@@ -26,18 +26,29 @@
             top: 10px;
             left: 10px;
             color: white;
-            background: rgba(0, 0, 0, 0.5);
-            padding: 10px;
-            border-radius: 5px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 8px;
+            max-width: 280px;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+        #instructions ul {
+            margin: 8px 0 0 0;
+            padding-left: 18px;
         }
         #score {
             position: absolute;
             top: 10px;
             right: 10px;
             color: white;
-            background: rgba(0, 0, 0, 0.5);
-            padding: 10px;
-            border-radius: 5px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: bold;
+            text-align: center;
+            min-width: 150px;
         }
     </style>
 </head>
@@ -45,8 +56,15 @@
     <div id="game-container">
         <canvas id="gameCanvas" width="800" height="600"></canvas>
         <div id="instructions">
-            <p>Click to cast your line.</p>
-            <p>When the bobber shakes, click quickly to reel in!</p>
+            <strong>🎣 Fishing Game</strong><br>
+            👆 <strong>Click</strong> to cast / reel<br>
+            <br>🎇 Bobber shakes → Reel <strong>QUICKLY</strong>!<br>
+            <br>💎 Catch floating orbs <em>(anytime hook sunk)</em>:<br>
+            <ul>
+                <li>🟣 <strong>D</strong> - Next 5 fish <strong>x2</strong></li>
+                <li>🟣 <strong>M</strong> - <strong>10s</strong> Magnet</li>
+                <li>🟢 <strong>B</strong> - Next fish <strong>+5</strong> pts</li>
+            </ul>
         </div>
         <div id="score">Score: 0</div>
     </div>
@@ -61,34 +79,136 @@
         let isBiting = false;
         let biteTimer = 0;
         let reactionTime = 0;
-        let hookX = canvas.width / 2;
-        let hookY = 0;
+        let hookX = 0;
         let bobberY = 0;
         let fish = [];
+        let powerups = [];
         let lineLength = 0;
+        let powerupTimer = 0;
+        let multiplier = 1;
+        let multiplierRemaining = 0;
+        let magnetActive = false;
+        let magnetEndTime = 0;
+        let bonusPoints = 0;
+        const centerX = canvas.width / 2;
+        let shakeOffset = 0;
+        const catchRadius = 25;
+        const sinkTarget = canvas.height * 0.75;
+
+        // PowerUp class
+        class PowerUp {
+            constructor() {
+                this.x = Math.random() * (canvas.width - 40) + 20;
+                this.y = canvas.height + 20;
+                this.type = ['double', 'magnet', 'big'][Math.floor(Math.random() * 3)];
+                this.size = 12;
+                this.speed = 1 + Math.random();
+            }
+
+            update() {
+                this.y -= this.speed;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                const colors = {
+                    double: '#FF1493',
+                    magnet: '#00BFFF',
+                    big: '#32CD32'
+                };
+                ctx.fillStyle = colors[this.type];
+                ctx.beginPath();
+                ctx.arc(0, 0, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowColor = ctx.fillStyle;
+                ctx.shadowBlur = 10;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#FFF';
+                ctx.font = 'bold 10px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.type[0].toUpperCase(), 0, 0);
+                ctx.restore();
+            }
+        }
 
         // Fish class
         class Fish {
             constructor() {
                 this.x = Math.random() * canvas.width;
                 this.y = Math.random() * (canvas.height / 2) + canvas.height / 2;
-                this.speed = Math.random() * 2 + 1;
+                this.speed = 1 + Math.random() * 2;
                 this.direction = Math.random() > 0.5 ? 1 : -1;
-                this.size = Math.random() * 20 + 10;
+                this.size = 10 + Math.random() * 15;
             }
 
             update() {
+                // Normal swimming
                 this.x += this.speed * this.direction;
-                if (this.x < 0 || this.x > canvas.width) {
+                if (this.x < this.size || this.x > canvas.width - this.size) {
                     this.direction *= -1;
+                    this.x = Math.max(this.size, Math.min(canvas.width - this.size, this.x));
+                }
+
+                // Magnet attraction
+                if (magnetActive && Date.now() < magnetEndTime && isCasting && bobberY > canvas.height * 0.6) {
+                    const dist = Math.hypot(this.x - hookX, this.y - bobberY);
+                    if (dist < 180 && dist > 0) {
+                        const attractSpeed = this.speed * 1.5;
+                        const dx = (hookX - this.x) / dist;
+                        const dy = (bobberY - this.y) / dist;
+                        this.x += dx * attractSpeed;
+                        this.y += dy * attractSpeed;
+                        this.x = Math.max(this.size, Math.min(canvas.width - this.size, this.x));
+                        if (this.y < canvas.height / 2 + 10) {
+                            this.y = canvas.height / 2 + 10;
+                        }
+                    }
                 }
             }
 
             draw() {
-                ctx.fillStyle = '#FFD700'; // Gold fish color
+                ctx.fillStyle = '#FFD700';
                 ctx.beginPath();
                 ctx.ellipse(this.x, this.y, this.size, this.size / 2, 0, 0, Math.PI * 2);
                 ctx.fill();
+                // Simple eye
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(this.x - this.size / 3, this.y - 2, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // Apply power-up effect
+        function applyPowerUp(type) {
+            switch (type) {
+                case 'double':
+                    multiplier = 2;
+                    multiplierRemaining = 5;
+                    break;
+                case 'magnet':
+                    magnetActive = true;
+                    magnetEndTime = Date.now() + 10000;
+                    break;
+                case 'big':
+                    bonusPoints = 5;
+                    break;
+            }
+        }
+
+        // Reset cast
+        function resetCast() {
+            isCasting = false;
+            isBiting = false;
+            lineLength = 0;
+            bobberY = 0;
+            hookX = centerX;
+            shakeOffset = 0;
+            if (fish.length < 5) {
+                fish.push(new Fish());
             }
         }
 
@@ -105,94 +225,139 @@
             ctx.fillStyle = '#4682B4';
             ctx.fillRect(0, canvas.height / 2, canvas.width, canvas.height / 2);
 
-            // Draw fishing rod (simple line from top)
-            ctx.strokeStyle = '#000';
-            ctx.lineWidth = 2;
+            // Draw fishing rod
+            ctx.strokeStyle = '#8B4513';
+            ctx.lineWidth = 4;
             ctx.beginPath();
-            ctx.moveTo(canvas.width / 2, 0);
-            ctx.lineTo(canvas.width / 2, 50);
+            ctx.moveTo(centerX, 0);
+            ctx.lineTo(centerX, 50);
             ctx.stroke();
 
-            // Draw fishing line and bobber if casting
+            // Casting logic
             if (isCasting) {
-                ctx.strokeStyle = '#000';
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                ctx.moveTo(canvas.width / 2, 50);
-                ctx.lineTo(hookX, bobberY);
-                ctx.stroke();
-
-                // Bobber
-                ctx.fillStyle = '#FF0000';
-                ctx.beginPath();
-                ctx.arc(hookX, bobberY, 5, 0, Math.PI * 2);
-                ctx.fill();
-
-                // Lower the hook initially
-                if (lineLength < canvas.height * 0.75) {
-                    lineLength += 2;
+                if (lineLength < sinkTarget) {
+                    lineLength += 3;
                     bobberY = 50 + lineLength;
+                    hookX = centerX;
                 } else {
                     // Check for bite
-                    if (!isBiting && Math.random() < 0.01) {
+                    if (!isBiting && Math.random() < 0.006) {
                         isBiting = true;
                         biteTimer = Date.now();
                     }
-
+                    // Shake bobber
                     if (isBiting) {
-                        // Shake bobber
-                        hookX = canvas.width / 2 + (Math.random() - 0.5) * 10;
-                        reactionTime = Date.now() - biteTimer;
-                        if (reactionTime > 3000) { // Missed the bite
-                            resetCast();
-                        }
+                        shakeOffset += 0.4;
+                        hookX = centerX + Math.sin(shakeOffset) * 12;
                     }
                 }
             }
 
-            // Update and draw fish
-            fish.forEach(f => {
-                f.update();
-                f.draw();
-            });
+            // Update fish
+            fish.forEach(f => f.update());
 
-            // Check if hook catches a fish
-            if (isBiting && isCasting) {
-                fish = fish.filter(f => {
-                    if (Math.abs(f.x - hookX) < 20 && Math.abs(f.y - bobberY) < 20) {
-                        score += 1;
-                        scoreElement.textContent = `Score: ${score}`;
-                        return false; // Remove caught fish
+            // Update powerups
+            powerups.forEach(p => p.update());
+
+            // Spawn powerup occasionally
+            powerupTimer++;
+            if (powerups.length < 2 && powerupTimer > 1800 + Math.floor(Math.random() * 1200)) {
+                powerups.push(new PowerUp());
+                powerupTimer = 0;
+            }
+
+            // Catch powerups (anytime when sunk)
+            if (isCasting && lineLength >= sinkTarget - 50) {
+                powerups = powerups.filter(p => {
+                    if (p.y > 0 && Math.hypot(p.x - hookX, p.y - bobberY) < catchRadius) {
+                        applyPowerUp(p.type);
+                        return false;
                     }
                     return true;
                 });
             }
 
-            requestAnimationFrame(gameLoop);
-        }
-
-        // Reset after catch or miss
-        function resetCast() {
-            isCasting = false;
-            isBiting = false;
-            lineLength = 0;
-            bobberY = 0;
-            hookX = canvas.width / 2;
-            // Add new fish if needed
-            if (fish.length < 5) {
-                fish.push(new Fish());
+            // Catch fish (only during bite)
+            if (isBiting) {
+                fish = fish.filter(f => {
+                    if (Math.hypot(f.x - hookX, f.y - bobberY) < catchRadius) {
+                        let catchScore = multiplier;
+                        if (bonusPoints > 0) {
+                            catchScore += bonusPoints;
+                            bonusPoints = 0;
+                        }
+                        score += catchScore;
+                        if (multiplierRemaining > 0) {
+                            multiplierRemaining--;
+                            if (multiplierRemaining <= 0) {
+                                multiplier = 1;
+                            }
+                        }
+                        return false;
+                    }
+                    return true;
+                });
             }
+
+            // Draw fishing line and bobber
+            if (isCasting) {
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 2;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(centerX, 50);
+                ctx.lineTo(hookX, bobberY);
+                ctx.stroke();
+
+                // Bobber
+                ctx.fillStyle = isBiting ? '#FF4444' : '#FF0000';
+                ctx.shadowColor = isBiting ? '#FF0000' : '#CC0000';
+                ctx.shadowBlur = isBiting ? 15 : 5;
+                ctx.beginPath();
+                ctx.arc(hookX, bobberY, 8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+
+            // Draw fish
+            fish.forEach(f => f.draw());
+
+            // Draw powerups
+            powerups.forEach(p => p.draw());
+
+            // Check for missed bite
+            if (isBiting) {
+                reactionTime = Date.now() - biteTimer;
+                if (reactionTime > 3500) {
+                    resetCast();
+                }
+            }
+
+            // Update score display
+            const now = Date.now();
+            let display = `Score: ${score}`;
+            if (multiplierRemaining > 0) {
+                display += ` | x${multiplier} (${multiplierRemaining})`;
+            }
+            if (magnetActive && now < magnetEndTime) {
+                const secs = Math.ceil((magnetEndTime - now) / 1000);
+                display += ` | Magnet: ${secs}s`;
+            }
+            if (bonusPoints > 0) {
+                display += ` | +${bonusPoints}`;
+            }
+            scoreElement.innerHTML = display;
+
+            requestAnimationFrame(gameLoop);
         }
 
         // Handle clicks
         canvas.addEventListener('click', () => {
             if (!isCasting) {
                 isCasting = true;
-            } else if (isBiting) {
-                // Reeling in
-                if (reactionTime < 2000) { // Successful catch if quick enough
-                    // Fish is caught in the filter above
-                }
+                lineLength = 0;
+                bobberY = 0;
+            } else {
                 resetCast();
             }
         });
